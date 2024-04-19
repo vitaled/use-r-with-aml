@@ -1,0 +1,11 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+command: Rscript run.R --data_file ${{inputs.datafile}}
+code: src   # this is the code directory
+inputs:
+  datafile: # this is a registered data asset
+    type: uri_file
+    path: azureml:creditcard-dataset@latest
+environment: azureml:aml-poc-r-example-env@latest
+compute: azureml:computejamarpoc
+experiment_name: aml-r-poc-example-experiment
+description: This is just an example

@@ -1,0 +1,131 @@
+source("azureml_utils.R")
+
+
+library("bnlearn")
+library("imbalance")
+library("lightgbm")
+library(tidyverse)
+
+# parse the command line arguments.
+library(optparse)
+
+parser <- OptionParser()
+
+
+parser <- add_option(
+  parser,
+  "--data_file",
+  type = "character",
+  action = "store",
+  default = "data/myfile.csv"
+)
+
+args <- parse_args(parser)
+
+data_df <- read.csv(args$data_file)
+
+# Split the dataset into training and test datasets
+set.seed(42)
+train_sample_ids <- base::sample(seq_len(nrow(data_df)), size = floor(0.85 * nrow(data_df)))
+
+train_df <- data_df[train_sample_ids, ]
+test_df <- data_df[-train_sample_ids, ]
+
+# Apply SMOTE to the training dataset
+library(imbalance)
+
+# Print the shape of the original (imbalanced) training dataset
+train_y_categ <- train_df %>% select(Class) %>% table
+message(
+    paste0(
+        "Original dataset shape ",
+        paste(names(train_y_categ), train_y_categ, sep = ": ", collapse = ", ")
+    )
+)
+
+# Resample the training dataset by using SMOTE
+smote_train_df <- train_df %>%
+    mutate(Class = factor(Class)) %>%
+    oversample(ratio = 0.99, method = "SMOTE", classAttr = "Class") %>%
+    mutate(Class = as.integer(as.character(Class)))
+
+# Print the shape of the resampled (balanced) training dataset
+smote_train_y_categ <- smote_train_df %>% select(Class) %>% table
+message(
+    paste0(
+        "Resampled dataset shape ",
+        paste(names(smote_train_y_categ), smote_train_y_categ, sep = ": ", collapse = ", ")
+    )
+)
+
+# Train LightGBM for both imbalanced and balanced datasets and define the evaluation metrics
+library(lightgbm)
+
+# Get the ID of the label column
+label_col <- which(names(train_df) == "Class")
+
+# Convert the testing dataset for the model
+test_mtx <- as.matrix(test_df)
+test_x <- test_mtx[, -label_col]
+test_y <- test_mtx[, label_col]
+
+# Set up the parameters for training
+params <- list(
+    objective = "binary",
+    learning_rate = 0.05,
+    first_metric_only = TRUE
+)
+
+# Train for the imbalanced dataset
+message("Start training with imbalanced data:")
+train_mtx <- as.matrix(train_df)
+train_x <- train_mtx[, -label_col]
+train_y <- train_mtx[, label_col]
+train_data <- lgb.Dataset(train_x, label = train_y)
+valid_data <- lgb.Dataset.create.valid(train_data, test_x, label = test_y)
+model <- lgb.train(
+    data = train_data,
+    params = params,
+    eval = list("binary_logloss", "auc"),
+    valids = list(valid = valid_data),
+    nrounds = 300L
+)
+
+# Train for balanced (via SMOTE) dataset   
+message("\n\nStart training with balanced data:")
+smote_train_mtx <- as.matrix(smote_train_df)
+smote_train_x <- smote_train_mtx[, -label_col]
+smote_train_y <- smote_train_mtx[, label_col]
+smote_train_data <- lgb.Dataset(smote_train_x, label = smote_train_y)
+smote_valid_data <- lgb.Dataset.create.valid(smote_train_data, test_x, label = test_y)
+smote_model <- lgb.train(
+    data = smote_train_data,
+    params = params,
+    eval = list("binary_logloss", "auc"),
+    valids = list(valid = smote_valid_data),
+    nrounds = 300L
+)
+
+
+library(carrier)
+crated_model <- crate(function(x)
+{
+  lightgbm::predict(!!smote_model,x)
+})
+
+
+# create the ./outputs directory
+dir.create("./outputs")
+
+# log models and parameters to MLflow
+mlflow_start_run()
+
+mlflow_log_model(
+  model = crated_model, # the crate model object
+  artifact_path = "models" # a path to save the model object to
+  )
+
+#mlflow_log_param(<key-name>, <value>)
+
+# mlflow_end_run() - causes an error, do not include mlflow_end_run()
+## END OF R SCRIPT

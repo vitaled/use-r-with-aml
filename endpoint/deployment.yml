@@ -1,0 +1,21 @@
+$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
+name: r-script-cc-endpoint-deploy-blue
+endpoint_name: r-script-cc-endpoint
+code_configuration:
+  code: ./src
+  scoring_script: plumber.R
+model: azureml:cc-fraud-detection:2
+environment:
+  image: amlcajamarpoc3453453292.azurecr.io/r-script-deploy-image
+  inference_config:
+    liveness_route:
+      port: 8000
+      path: /live
+    readiness_route:
+      port: 8000
+      path: /ready
+    scoring_route:
+      port: 8000
+      path: /score
+instance_type: Standard_DS2_v2
+instance_count: 1
